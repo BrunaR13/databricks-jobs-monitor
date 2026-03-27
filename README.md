@@ -24,13 +24,13 @@ O dashboard monitora jobs Databricks nos últimos 30 dias, com foco em:
 #### Visão Geral
 ![Visão Geral](images/01-visao-geral.png)
 
-#### KPIs e Métricas
+#### Jobs de longa duração
 ![KPIs](images/02-kpis.png)
 
-#### Tendência de Execuções
+#### Análise de configurações
 ![Tendência](images/03-tendencia.png)
 
-#### Jobs de Longa Duração
+#### Auditoria
 ![Jobs Longa Duração](images/04-jobs-longa-duracao.png)
 
 ## Pré-requisitos
