@@ -1,0 +1,1425 @@
+{
+  "datasets": [
+    {
+      "name": "kpis_resumo",
+      "displayName": "KPIs Resumo",
+      "queryLines": [
+        "SELECT\n",
+        "  j.job_id,\n",
+        "  COALESCE(j.creator_user_name, j.creator_id) AS criador,\n",
+        "  COUNT(DISTINCT r.run_id) AS total_execucoes,\n",
+        "  COUNT(DISTINCT CASE WHEN r.result_state IN ('FAILED', 'ERROR', 'TIMED_OUT') THEN r.run_id END) AS execucoes_com_falha,\n",
+        "  COUNT(DISTINCT CASE WHEN (unix_timestamp(r.period_end_time) - unix_timestamp(r.period_start_time)) > 3600 THEN r.run_id END) AS runs_longa_duracao\n",
+        "FROM system.lakeflow.jobs j\n",
+        "LEFT JOIN system.lakeflow.job_run_timeline r\n",
+        "  ON j.job_id = r.job_id\n",
+        "  AND j.workspace_id = r.workspace_id\n",
+        "  AND r.period_start_time >= date_sub(current_date(), 30)\n",
+        "WHERE j.delete_time IS NULL\n",
+        "GROUP BY j.job_id, COALESCE(j.creator_user_name, j.creator_id)"
+      ]
+    },
+    {
+      "name": "tendencia_execucoes",
+      "displayName": "Tendencia Execucoes",
+      "queryLines": [
+        "SELECT   j.job_id,   COALESCE(j.creator_user_name, j.creator_id) as criador,   DATE(r.period_start_time) as data,   COUNT(*) as total_execucoes,   SUM(CASE WHEN r.result_state = 'SUCCEEDED' THEN 1 ELSE 0 END) as sucesso,   COUNT(DISTINCT CASE WHEN r.result_state IN ('FAILED', 'ERROR', 'TIMED_OUT') THEN r.run_id END) as falha FROM system.lakeflow.job_run_timeline r JOIN system.lakeflow.jobs j ON r.job_id = j.job_id AND r.workspace_id = j.workspace_id WHERE r.period_start_time >= date_sub(current_date(), 30)   AND r.result_state IS NOT NULL   AND j.delete_time IS NULL GROUP BY j.job_id, COALESCE(j.creator_user_name, j.creator_id), DATE(r.period_start_time) ORDER BY data"
+      ]
+    },
+    {
+      "name": "distribuicao_status",
+      "displayName": "Distribuicao Status",
+      "queryLines": [
+        "SELECT\n",
+        "  j.job_id,\n",
+        "  COALESCE(j.creator_user_name, j.creator_id) AS criador,\n",
+        "  r.result_state AS status,\n",
+        "  COUNT(DISTINCT r.run_id) AS quantidade\n",
+        "FROM system.lakeflow.job_run_timeline r\n",
+        "JOIN system.lakeflow.jobs j\n",
+        "  ON r.job_id = j.job_id\n",
+        "  AND r.workspace_id = j.workspace_id\n",
+        "WHERE r.period_start_time >= date_sub(current_date(), 30)\n",
+        "  AND r.result_state IS NOT NULL\n",
+        "  AND j.delete_time IS NULL\n",
+        "GROUP BY j.job_id, COALESCE(j.creator_user_name, j.creator_id), r.result_state"
+      ]
+    },
+    {
+      "name": "jobs_longa_duracao",
+      "displayName": "Jobs Longa Duracao",
+      "queryLines": [
+        "SELECT   j.job_id,   COALESCE(j.creator_user_name, j.creator_id) as criador,   j.name as nome_job,   COALESCE(j.run_as_user_name, j.run_as) as executado_como,   r.run_id,   r.period_start_time as inicio,   r.period_end_time as fim,   r.result_state as status,   r.termination_code as codigo_termino,   ROUND((unix_timestamp(r.period_end_time) - unix_timestamp(r.period_start_time)) / 3600.0, 2) as duracao_horas,   COALESCE(j.timeout_seconds, 0) / 3600 as timeout_horas FROM system.lakeflow.job_run_timeline r JOIN system.lakeflow.jobs j ON r.job_id = j.job_id AND r.workspace_id = j.workspace_id WHERE r.period_start_time >= date_sub(current_date(), 30)   AND r.period_end_time IS NOT NULL   AND (unix_timestamp(r.period_end_time) - unix_timestamp(r.period_start_time)) > 3600   AND j.delete_time IS NULL ORDER BY duracao_horas DESC LIMIT 100"
+      ]
+    },
+    {
+      "name": "codigos_termino",
+      "displayName": "Codigos Termino",
+      "queryLines": [
+        "WITH latest_jobs AS (\n",
+        "  SELECT\n",
+        "    workspace_id,\n",
+        "    job_id,\n",
+        "    COALESCE(creator_user_name, creator_id) AS criador\n",
+        "  FROM\n",
+        "    system.lakeflow.jobs\n",
+        "  WHERE\n",
+        "    delete_time IS NULL\n",
+        "  QUALIFY\n",
+        "    ROW_NUMBER() OVER (PARTITION BY workspace_id, job_id ORDER BY change_time DESC) = 1\n",
+        "),\n",
+        "last_slice AS (\n",
+        "  SELECT\n",
+        "    r.workspace_id,\n",
+        "    r.job_id,\n",
+        "    r.run_id,\n",
+        "    r.termination_code\n",
+        "  FROM\n",
+        "    system.lakeflow.job_run_timeline r\n",
+        "  WHERE\n",
+        "    r.period_start_time >= date_sub(current_date(), 30)\n",
+        "    AND r.termination_code IS NOT NULL\n",
+        "  QUALIFY\n",
+        "    ROW_NUMBER() OVER (PARTITION BY r.run_id ORDER BY r.period_end_time DESC) = 1\n",
+        ")\n",
+        "SELECT\n",
+        "  j.job_id,\n",
+        "  j.criador,\n",
+        "  ls.termination_code AS codigo_termino,\n",
+        "  COUNT(*) AS quantidade\n",
+        "FROM\n",
+        "  last_slice ls\n",
+        "    JOIN latest_jobs j\n",
+        "      ON ls.job_id = j.job_id\n",
+        "      AND ls.workspace_id = j.workspace_id\n",
+        "GROUP BY\n",
+        "  j.job_id,\n",
+        "  j.criador,\n",
+        "  ls.termination_code"
+      ]
+    },
+    {
+      "name": "analise_config",
+      "displayName": "Analise Configuracoes",
+      "queryLines": [
+        "SELECT\n",
+        "  j.job_id,\n",
+        "  COALESCE(j.creator_user_name, j.creator_id) AS criador,\n",
+        "  j.name AS nome_job,\n",
+        "  j.change_time AS data_hora_configuracao,\n",
+        "  CASE\n",
+        "    WHEN j.timeout_seconds IS NULL OR j.timeout_seconds = 0 THEN 'Sem Timeout'\n",
+        "    ELSE 'Com Timeout'\n",
+        "  END AS config_timeout,\n",
+        "  j.timeout_seconds AS valor_timeout,\n",
+        "  CASE\n",
+        "    WHEN j.health_rules IS NULL OR SIZE(j.health_rules) = 0 THEN 'Sem Health Rules'\n",
+        "    ELSE 'Com Health Rules'\n",
+        "  END AS config_health_rules,\n",
+        "  j.health_rules AS regras_configuradas,\n",
+        "  CASE\n",
+        "    WHEN j.tags IS NULL OR SIZE(j.tags) = 0 THEN 'Sem Tags'\n",
+        "    ELSE 'Com Tags'\n",
+        "  END AS config_tags,\n",
+        "  j.tags as tags_configuradas,\n",
+        "  CASE\n",
+        "    WHEN j.run_as_user_name LIKE '%@%' THEN 'Usuario Pessoal'\n",
+        "    WHEN j.run_as_user_name IS NOT NULL THEN 'Service Principal'\n",
+        "    ELSE 'Nao Definido'\n",
+        "  END AS tipo_identidade,\n",
+        "  COALESCE(j.trigger_type, 'Manual') AS tipo_trigger,\n",
+        "  CASE\n",
+        "    WHEN j.paused = true THEN 'Pausado'\n",
+        "    ELSE 'Ativo'\n",
+        "  END AS status_job\n",
+        "FROM system.lakeflow.jobs j\n",
+        "WHERE j.delete_time IS NULL"
+      ]
+    },
+    {
+      "name": "resumo_problemas",
+      "displayName": "Resumo Problemas",
+      "queryLines": [
+        "SELECT 'Sem Timeout' as problema, COUNT(DISTINCT job_id) as quantidade FROM system.lakeflow.jobs WHERE delete_time IS NULL AND (timeout_seconds IS NULL OR timeout_seconds = 0) UNION ALL SELECT 'Sem Health Rules', COUNT(DISTINCT job_id) FROM system.lakeflow.jobs WHERE delete_time IS NULL AND (SIZE(health_rules) = 0 OR health_rules IS NULL) UNION ALL SELECT 'Usuario Pessoal', COUNT(DISTINCT job_id) FROM system.lakeflow.jobs WHERE delete_time IS NULL AND run_as_user_name LIKE '%@%' UNION ALL SELECT 'Sem Tags', COUNT(DISTINCT job_id) FROM system.lakeflow.jobs WHERE delete_time IS NULL AND (SIZE(tags) = 0 OR tags IS NULL)"
+      ]
+    },
+    {
+      "name": "audit_jobs",
+      "displayName": "Audit Jobs",
+      "queryLines": [
+        "SELECT\n",
+        "  request_params['job_id'] AS job_id,\n",
+        "  user_identity.email AS criador,\n",
+        "  event_time AS data_hora,\n",
+        "  action_name AS acao,\n",
+        "  request_params as parametros,\n",
+        "  response.status_code AS status_code\n",
+        "FROM\n",
+        "  system.access.audit\n",
+        "WHERE\n",
+        "  service_name = 'jobs'\n",
+        "  AND event_time >= date_sub(current_date(), 7)\n",
+        "  AND action_name IN ('create', 'update', 'delete', 'runNow', 'cancel', 'reset')\n",
+        "ORDER BY\n",
+        "  event_time DESC"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "filtros",
+      "displayName": "Filtros",
+      "layout": [
+        {
+          "widget": {
+            "name": "filter-job-id",
+            "queries": [
+              {
+                "name": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f5e9e0f2b7fa1e65269_job_id",
+                "query": {
+                  "datasetName": "kpis_resumo",
+                  "fields": [
+                    {
+                      "name": "job_id",
+                      "expression": "`job_id`"
+                    },
+                    {
+                      "name": "job_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f859662da9e99e4f48a_job_id",
+                "query": {
+                  "datasetName": "tendencia_execucoes",
+                  "fields": [
+                    {
+                      "name": "job_id",
+                      "expression": "`job_id`"
+                    },
+                    {
+                      "name": "job_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f89838a6ea742781e12_job_id",
+                "query": {
+                  "datasetName": "distribuicao_status",
+                  "fields": [
+                    {
+                      "name": "job_id",
+                      "expression": "`job_id`"
+                    },
+                    {
+                      "name": "job_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f8d92c7f24ff9eb04e4_job_id",
+                "query": {
+                  "datasetName": "jobs_longa_duracao",
+                  "fields": [
+                    {
+                      "name": "job_id",
+                      "expression": "`job_id`"
+                    },
+                    {
+                      "name": "job_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f919001438d16dc7fab_job_id",
+                "query": {
+                  "datasetName": "codigos_termino",
+                  "fields": [
+                    {
+                      "name": "job_id",
+                      "expression": "`job_id`"
+                    },
+                    {
+                      "name": "job_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f94ac809fa2df559bbe_job_id",
+                "query": {
+                  "datasetName": "analise_config",
+                  "fields": [
+                    {
+                      "name": "job_id",
+                      "expression": "`job_id`"
+                    },
+                    {
+                      "name": "job_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f9bbdeac2aba82b2905_job_id",
+                "query": {
+                  "datasetName": "audit_jobs",
+                  "fields": [
+                    {
+                      "name": "job_id",
+                      "expression": "`job_id`"
+                    },
+                    {
+                      "name": "job_id_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Job ID"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "job_id",
+                    "queryName": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f5e9e0f2b7fa1e65269_job_id"
+                  },
+                  {
+                    "fieldName": "job_id",
+                    "queryName": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f859662da9e99e4f48a_job_id"
+                  },
+                  {
+                    "fieldName": "job_id",
+                    "queryName": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f89838a6ea742781e12_job_id"
+                  },
+                  {
+                    "fieldName": "job_id",
+                    "queryName": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f8d92c7f24ff9eb04e4_job_id"
+                  },
+                  {
+                    "fieldName": "job_id",
+                    "queryName": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f919001438d16dc7fab_job_id"
+                  },
+                  {
+                    "fieldName": "job_id",
+                    "queryName": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f94ac809fa2df559bbe_job_id"
+                  },
+                  {
+                    "fieldName": "job_id",
+                    "queryName": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f9bbdeac2aba82b2905_job_id"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "filter-criador",
+            "queries": [
+              {
+                "name": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f5e9e0f2b7fa1e65269_criador",
+                "query": {
+                  "datasetName": "kpis_resumo",
+                  "fields": [
+                    {
+                      "name": "criador",
+                      "expression": "`criador`"
+                    },
+                    {
+                      "name": "criador_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f859662da9e99e4f48a_criador",
+                "query": {
+                  "datasetName": "tendencia_execucoes",
+                  "fields": [
+                    {
+                      "name": "criador",
+                      "expression": "`criador`"
+                    },
+                    {
+                      "name": "criador_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f89838a6ea742781e12_criador",
+                "query": {
+                  "datasetName": "distribuicao_status",
+                  "fields": [
+                    {
+                      "name": "criador",
+                      "expression": "`criador`"
+                    },
+                    {
+                      "name": "criador_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f8d92c7f24ff9eb04e4_criador",
+                "query": {
+                  "datasetName": "jobs_longa_duracao",
+                  "fields": [
+                    {
+                      "name": "criador",
+                      "expression": "`criador`"
+                    },
+                    {
+                      "name": "criador_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f919001438d16dc7fab_criador",
+                "query": {
+                  "datasetName": "codigos_termino",
+                  "fields": [
+                    {
+                      "name": "criador",
+                      "expression": "`criador`"
+                    },
+                    {
+                      "name": "criador_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f94ac809fa2df559bbe_criador",
+                "query": {
+                  "datasetName": "analise_config",
+                  "fields": [
+                    {
+                      "name": "criador",
+                      "expression": "`criador`"
+                    },
+                    {
+                      "name": "criador_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f9bbdeac2aba82b2905_criador",
+                "query": {
+                  "datasetName": "audit_jobs",
+                  "fields": [
+                    {
+                      "name": "criador",
+                      "expression": "`criador`"
+                    },
+                    {
+                      "name": "criador_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Usuário"
+              },
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "criador",
+                    "queryName": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f5e9e0f2b7fa1e65269_criador"
+                  },
+                  {
+                    "fieldName": "criador",
+                    "queryName": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f859662da9e99e4f48a_criador"
+                  },
+                  {
+                    "fieldName": "criador",
+                    "queryName": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f89838a6ea742781e12_criador"
+                  },
+                  {
+                    "fieldName": "criador",
+                    "queryName": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f8d92c7f24ff9eb04e4_criador"
+                  },
+                  {
+                    "fieldName": "criador",
+                    "queryName": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f919001438d16dc7fab_criador"
+                  },
+                  {
+                    "fieldName": "criador",
+                    "queryName": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f94ac809fa2df559bbe_criador"
+                  },
+                  {
+                    "fieldName": "criador",
+                    "queryName": "dashboards/01f12832bde21d6ea99510cf0a78552e/datasets/01f1283b7acd1f9bbdeac2aba82b2905_criador"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 0,
+            "width": 2,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_GLOBAL_FILTERS"
+    },
+    {
+      "name": "visao_geral",
+      "displayName": "Visão Geral",
+      "layout": [
+        {
+          "widget": {
+            "name": "titulo",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Monitor de Jobs Databricks"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "subtitulo",
+            "multilineTextboxSpec": {
+              "lines": [
+                "Monitoramento de execuções, falhas e jobs de longa duração nos últimos 30 dias"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 1,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-total-jobs",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kpis_resumo",
+                  "fields": [
+                    {
+                      "name": "countdistinct(job_id)",
+                      "expression": "COUNT(DISTINCT `job_id`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "countdistinct(job_id)",
+                  "displayName": "Total de Jobs"
+                }
+              },
+              "frame": {
+                "title": "Total de Jobs",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-total-execucoes",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kpis_resumo",
+                  "fields": [
+                    {
+                      "name": "sum(total_execucoes)",
+                      "expression": "SUM(`total_execucoes`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Total de Execuções",
+                "showTitle": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(total_execucoes)",
+                  "displayName": "Execucoes"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-falhas",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kpis_resumo",
+                  "fields": [
+                    {
+                      "name": "sum(execucoes_com_falha)",
+                      "expression": "SUM(`execucoes_com_falha`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Execuções FAILED, ERROR ou TIMED_OUT",
+                "showTitle": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(execucoes_com_falha)",
+                  "displayName": "Falhas"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-tendencia",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "tendencia_execucoes",
+                  "fields": [
+                    {
+                      "name": "daily(data)",
+                      "expression": "DATE_TRUNC(\"DAY\", `data`)"
+                    },
+                    {
+                      "name": "sum(sucesso)",
+                      "expression": "SUM(`sucesso`)"
+                    },
+                    {
+                      "name": "sum(falha)",
+                      "expression": "SUM(`falha`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "title": "Tendência de Execuções por Dia",
+                "showTitle": true
+              },
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "daily(data)",
+                  "displayName": "Data",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "fields": [
+                    {
+                      "fieldName": "sum(sucesso)",
+                      "displayName": "Sucesso"
+                    },
+                    {
+                      "fieldName": "sum(falha)",
+                      "displayName": "Falha"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-status",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "distribuicao_status",
+                  "fields": [
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "sum(quantidade)",
+                      "expression": "SUM(`quantidade`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "sum(quantidade)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Quantidade"
+                },
+                "color": {
+                  "fieldName": "status",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Status"
+                }
+              },
+              "frame": {
+                "title": "Distribuicao de Status",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-termino",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "codigos_termino",
+                  "fields": [
+                    {
+                      "name": "codigo_termino",
+                      "expression": "`codigo_termino`"
+                    },
+                    {
+                      "name": "sum(quantidade)",
+                      "expression": "SUM(`quantidade`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "codigo_termino",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Codigo"
+                },
+                "y": {
+                  "fieldName": "sum(quantidade)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Quantidade"
+                }
+              },
+              "frame": {
+                "title": "Codigos de Termino",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 10,
+            "width": 6,
+            "height": 5
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "jobs_longa_duracao",
+      "displayName": "Jobs de Longa Duração",
+      "layout": [
+        {
+          "widget": {
+            "name": "titulo-longa",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Jobs de Longa Duração"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "subtitulo-longa",
+            "multilineTextboxSpec": {
+              "lines": [
+                "Jobs que executaram por mais de 1 hora nos ultimos 30 dias"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 1,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-longa-duracao",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kpis_resumo",
+                  "fields": [
+                    {
+                      "name": "sum(runs_longa_duracao)",
+                      "expression": "SUM(`runs_longa_duracao`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Total de Jobs > 1 Hora",
+                "showTitle": true
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(runs_longa_duracao)",
+                  "displayName": "Jobs >1h"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 12,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "tabela-longa",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "jobs_longa_duracao",
+                  "fields": [
+                    {
+                      "name": "nome_job",
+                      "expression": "`nome_job`"
+                    },
+                    {
+                      "name": "job_id",
+                      "expression": "`job_id`"
+                    },
+                    {
+                      "name": "criador",
+                      "expression": "`criador`"
+                    },
+                    {
+                      "name": "inicio",
+                      "expression": "`inicio`"
+                    },
+                    {
+                      "name": "fim",
+                      "expression": "`fim`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "duracao_horas",
+                      "expression": "`duracao_horas`"
+                    },
+                    {
+                      "name": "timeout_horas",
+                      "expression": "`timeout_horas`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Detalhes dos Jobs de Longa Duração",
+                "showTitle": true
+              },
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "nome_job",
+                    "displayName": "Nome do Job"
+                  },
+                  {
+                    "fieldName": "job_id",
+                    "displayName": "Job ID"
+                  },
+                  {
+                    "fieldName": "criador",
+                    "displayName": "Criador"
+                  },
+                  {
+                    "fieldName": "inicio",
+                    "displayName": "Inicio"
+                  },
+                  {
+                    "fieldName": "fim",
+                    "displayName": "Fim"
+                  },
+                  {
+                    "fieldName": "status",
+                    "displayName": "Status"
+                  },
+                  {
+                    "fieldName": "duracao_horas",
+                    "displayName": "Duracao (h)"
+                  },
+                  {
+                    "fieldName": "timeout_horas",
+                    "displayName": "Timeout (h)"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 12,
+            "height": 8
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "analise_config",
+      "displayName": "Análise de Configurações",
+      "layout": [
+        {
+          "widget": {
+            "name": "titulo-config",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Analise de Configuracoes de Jobs"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "subtitulo-config",
+            "multilineTextboxSpec": {
+              "lines": [
+                "Identifique jobs com configuracoes de risco: sem timeout, sem health rules, sem tags, etc."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 1,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-problemas",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "resumo_problemas",
+                  "fields": [
+                    {
+                      "name": "problema",
+                      "expression": "`problema`"
+                    },
+                    {
+                      "name": "quantidade",
+                      "expression": "`quantidade`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "problema",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "Problema"
+                },
+                "y": {
+                  "fieldName": "quantidade",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Quantidade de Jobs"
+                }
+              },
+              "frame": {
+                "title": "Resumo de Problemas de Configuracao",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 12,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "secao-detalhes",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Detalhes por Job"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 7,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "tabela-config",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "analise_config",
+                  "fields": [
+                    {
+                      "name": "data_hora_configuracao",
+                      "expression": "`data_hora_configuracao`"
+                    },
+                    {
+                      "name": "nome_job",
+                      "expression": "`nome_job`"
+                    },
+                    {
+                      "name": "job_id",
+                      "expression": "`job_id`"
+                    },
+                    {
+                      "name": "criador",
+                      "expression": "`criador`"
+                    },
+                    {
+                      "name": "config_timeout",
+                      "expression": "`config_timeout`"
+                    },
+                    {
+                      "name": "valor_timeout",
+                      "expression": "`valor_timeout`"
+                    },
+                    {
+                      "name": "config_health_rules",
+                      "expression": "`config_health_rules`"
+                    },
+                    {
+                      "name": "regras_configuradas",
+                      "expression": "`regras_configuradas`"
+                    },
+                    {
+                      "name": "config_tags",
+                      "expression": "`config_tags`"
+                    },
+                    {
+                      "name": "tags_configuradas",
+                      "expression": "`tags_configuradas`"
+                    },
+                    {
+                      "name": "tipo_identidade",
+                      "expression": "`tipo_identidade`"
+                    },
+                    {
+                      "name": "tipo_trigger",
+                      "expression": "`tipo_trigger`"
+                    },
+                    {
+                      "name": "status_job",
+                      "expression": "`status_job`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Configuracoes por Job",
+                "showTitle": true
+              },
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "data_hora_configuracao"
+                  },
+                  {
+                    "fieldName": "nome_job",
+                    "displayName": "Nome do Job"
+                  },
+                  {
+                    "fieldName": "job_id",
+                    "displayName": "Job ID"
+                  },
+                  {
+                    "fieldName": "criador",
+                    "displayName": "Criador"
+                  },
+                  {
+                    "fieldName": "config_timeout",
+                    "displayName": "Timeout"
+                  },
+                  {
+                    "fieldName": "valor_timeout"
+                  },
+                  {
+                    "fieldName": "config_health_rules",
+                    "displayName": "Health Rules"
+                  },
+                  {
+                    "fieldName": "regras_configuradas",
+                    "style": {
+                      "type": "basic"
+                    }
+                  },
+                  {
+                    "fieldName": "config_tags",
+                    "displayName": "Tags"
+                  },
+                  {
+                    "fieldName": "tags_configuradas"
+                  },
+                  {
+                    "fieldName": "tipo_identidade",
+                    "displayName": "Run As"
+                  },
+                  {
+                    "fieldName": "tipo_trigger",
+                    "displayName": "Trigger"
+                  },
+                  {
+                    "fieldName": "status_job",
+                    "displayName": "Status"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 12,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "f8bf1091",
+            "multilineTextboxSpec": {
+              "lines": [
+                "### Indicadores de Risco                                                                                                                             \n",
+                "\n",
+                "- **Sem Timeout:** Job pode executar indefinidamente, gerando custos inesperados                                                                     \n",
+                "- **Sem Health Rules:** Sem alertas automáticos quando o job excede a duração esperada                                                               \n",
+                "- **Sem Tags:** Dificulta rastreamento de custos e governança                                                                                        \n",
+                "- **Usuario Pessoal:** Job falha se o usuário sair da empresa ou perder permissões                                                                   \n",
+                "- **Pausado:** Job pode ser esquecido e nunca reativado    "
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 8,
+            "width": 12,
+            "height": 3
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "audit",
+      "displayName": "Auditoria",
+      "layout": [
+        {
+          "widget": {
+            "name": "titulo-audit",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Trilha de Auditoria"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "subtitulo-audit",
+            "multilineTextboxSpec": {
+              "lines": [
+                "Historico de acoes em jobs nos ultimos 7 dias"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 1,
+            "width": 6,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "tabela-audit",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "audit_jobs",
+                  "fields": [
+                    {
+                      "name": "data_hora",
+                      "expression": "`data_hora`"
+                    },
+                    {
+                      "name": "criador",
+                      "expression": "`criador`"
+                    },
+                    {
+                      "name": "acao",
+                      "expression": "`acao`"
+                    },
+                    {
+                      "name": "job_id",
+                      "expression": "`job_id`"
+                    },
+                    {
+                      "name": "status_code",
+                      "expression": "`status_code`"
+                    },
+                    {
+                      "name": "parametros",
+                      "expression": "`parametros`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "title": "Historico de Acoes",
+                "showTitle": true
+              },
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "data_hora",
+                    "displayName": "Data/Hora"
+                  },
+                  {
+                    "fieldName": "criador",
+                    "displayName": "Usuario"
+                  },
+                  {
+                    "fieldName": "acao",
+                    "displayName": "Acao"
+                  },
+                  {
+                    "fieldName": "job_id",
+                    "displayName": "Job ID"
+                  },
+                  {
+                    "fieldName": "status_code",
+                    "displayName": "Status"
+                  },
+                  {
+                    "fieldName": "parametros",
+                    "style": {
+                      "type": "json"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 6,
+            "height": 10
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    }
+  ]
+}
