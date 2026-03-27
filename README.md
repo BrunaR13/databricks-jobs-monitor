@@ -33,9 +33,6 @@ O dashboard monitora jobs Databricks nos últimos 30 dias, com foco em:
 #### Jobs de Longa Duração
 ![Jobs Longa Duração](images/04-jobs-longa-duracao.png)
 
-#### Análise de Configurações
-![Configurações](images/05-configuracoes.png)
-
 ## Pré-requisitos
 
 - Workspace Databricks com Unity Catalog habilitado
@@ -46,6 +43,9 @@ O dashboard monitora jobs Databricks nos últimos 30 dias, com foco em:
 - SQL Warehouse para executar as queries
 
 ## Instalação do Dashboard
+
+#### Como importar
+![Configurações](images/05-configuracoes.png)
 
 1. Importe o arquivo `dashboard.lvdash.json` no seu workspace Databricks
 2. Configure os filtros conforme necessário
