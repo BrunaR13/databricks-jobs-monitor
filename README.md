@@ -115,10 +115,3 @@ Job cancelado: Job de ETL Diário (run_id: 456)
 - Ações: create, update, delete, runNow, cancel
 - Parâmetros e usuário responsável
 
-## Contribuições
-
-Contribuições são bem-vindas! Sinta-se à vontade para abrir issues ou pull requests.
-
-## Licença
-
-MIT
