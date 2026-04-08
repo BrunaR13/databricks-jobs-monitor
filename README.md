@@ -6,7 +6,7 @@ Dashboard e script de monitoramento para jobs Databricks usando System Tables (L
 
 Este projeto contém:
 
-1. **Dashboard Lakeview** (`dashboard.lvdash.json`) - Dashboard interativo para monitoramento de jobs
+1. **AI/BI Dashboard** (`dashboard.lvdash.json`) - Dashboard interativo para monitoramento de jobs
 2. **Script Watchdog** (`script_job.py`) - Script Python para alertar e cancelar jobs de longa duração
 
 ## Dashboard
